@@ -28,6 +28,8 @@ constexpr int kSettleTimeMs = 200;
 
 extern pros::MotorGroup left_drive;
 extern pros::MotorGroup right_drive;
+extern pros::MotorGroup dr4b;
+extern pros::adi::DigitalOut claw;
 
 Pose robot_pose{0.0, 0.0, 0.0};
 double prev_left_inches = 0.0;
@@ -202,12 +204,23 @@ void drive_to_point(double x, double y, int timeout_ms) {
 	right_drive.move(0);
 }
 
+void run_dr4b(int voltage, int duration_ms) {
+	dr4b.move(voltage);
+	pros::delay(duration_ms);
+	dr4b.move(0);
+}
+
 void autonomous() {
 	position_set({0.0, 0.0, 0.0});
+	dr4b.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
 
-	// Test square. Replace these points with the real auton path.
-	drive_to_point(24.0, 0.0);
-	drive_to_point(24.0, 24.0);
-	drive_to_point(0.0, 24.0);
-	drive_to_point(0.0, 0.0);
+	// Short straight move, then a timed lift cycle and a claw cycle.
+	drive_to_point(12.0, 0.0);
+
+	run_dr4b(127, 800);
+	run_dr4b(-127, 800);
+
+	claw.set_value(true);
+	pros::delay(400);
+	claw.set_value(false);
 }
