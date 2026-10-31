@@ -2,12 +2,12 @@
 #include "auton.hpp"
 
 // Negate a port number to reverse that motor.
-// 1 DR4B right, 2 DR4B left, 3 back left, 12 front left,
-// 13 back right, 14 front right. Port 11 is the radio.
+// 1 DR4B right, 2 DR4B left, 3 back left, 14 front left,
+// 13 back right, 12 front right. Port 11 is the radio.
 // Right drive is reversed so positive is forward. Left DR4B is
 // reversed so both lift motors raise together.
-pros::MotorGroup left_drive({3, 12});
-pros::MotorGroup right_drive({-13, -14});
+pros::MotorGroup left_drive({3, 14});
+pros::MotorGroup right_drive({-13, -12});
 pros::MotorGroup dr4b({1, -2});
 pros::adi::DigitalOut claw('B');
 pros::Controller master(pros::E_CONTROLLER_MASTER);
