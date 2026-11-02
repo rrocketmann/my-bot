@@ -22,4 +22,10 @@ void position_set(Pose pose);
 // until the pose is within the settle distance or the timeout elapses.
 void drive_to_point(double x, double y, int timeout_ms = 4000);
 
+// Voltage commands in the -127..127 joystick scale. A negative port is reversed.
+// PROS motor_move rejects Motor Controller 55 ports, so this talks to VEXos directly.
+void port_move(int port, int command);
+void command_drive(int left, int right);
+void command_lift(int voltage);
+
 #endif

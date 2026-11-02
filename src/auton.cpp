@@ -195,19 +195,17 @@ void drive_to_point(double x, double y, int timeout_ms) {
 			right_voltage *= 127.0 / peak;
 		}
 
-		left_drive.move(clamp_voltage(left_voltage));
-		right_drive.move(clamp_voltage(right_voltage));
+		command_drive(clamp_voltage(left_voltage), clamp_voltage(right_voltage));
 		pros::delay(10);
 	}
 
-	left_drive.move(0);
-	right_drive.move(0);
+	command_drive(0, 0);
 }
 
 void run_dr4b(int voltage, int duration_ms) {
-	dr4b.move(voltage);
+	command_lift(voltage);
 	pros::delay(duration_ms);
-	dr4b.move(0);
+	command_lift(0);
 }
 
 void autonomous() {
