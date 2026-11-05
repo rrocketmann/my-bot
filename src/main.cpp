@@ -1,6 +1,5 @@
 #include "main.h"
 #include "auton.hpp"
-#include "pros/apix.h"
 
 #include <cstdint>
 #include <cstdio>
@@ -76,21 +75,27 @@ int clamp_command(int value) {
 
 enum class Teleop { Override, KBot };
 
-// Brain buttons pick the scheme. Waiting out the window keeps Override.
+// Brain touch picks the scheme. The left third selects Override, the right
+// third selects k-bot, and the middle confirms. Waiting out the window
+// keeps Override. This is not called; opcontrol runs k-bot directly.
 Teleop choose_teleop() {
 	Teleop scheme = Teleop::Override;
 	bool confirmed = false;
+	std::int32_t seen_presses = pros::screen::touch_status().press_count;
 	for (int elapsed = 0; elapsed < 3000 && !confirmed; elapsed += 20) {
 		const char* name = scheme == Teleop::KBot ? "k-bot" : "Override";
-		pros::lcd::print(0, "teleop: %s", name);
-		pros::lcd::print(1, "L/R change   center ok");
-		const std::uint8_t buttons = pros::lcd::read_buttons();
-		if (buttons & LCD_BTN_LEFT) {
-			scheme = Teleop::Override;
-		} else if (buttons & LCD_BTN_RIGHT) {
-			scheme = Teleop::KBot;
-		} else if (buttons & LCD_BTN_CENTER) {
-			confirmed = true;
+		pros::screen::print(TEXT_MEDIUM, 0, "teleop: %s", name);
+		pros::screen::print(TEXT_MEDIUM, 1, "left / right, center ok");
+		const pros::screen_touch_status_s_t touch = pros::screen::touch_status();
+		if (touch.press_count != seen_presses) {
+			seen_presses = touch.press_count;
+			if (touch.x < 160) {
+				scheme = Teleop::Override;
+			} else if (touch.x > 320) {
+				scheme = Teleop::KBot;
+			} else {
+				confirmed = true;
+			}
 		}
 		pros::delay(20);
 	}
@@ -98,8 +103,8 @@ Teleop choose_teleop() {
 }
 
 void initialize() {
-	pros::lcd::initialize();
-	pros::lcd::set_text(1, "Override");
+	pros::screen::set_pen(pros::Color::white);
+	pros::screen::print(TEXT_MEDIUM, 1, "k-bot");
 
 	left_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_COAST);
 	right_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_COAST);
@@ -111,9 +116,10 @@ void initialize() {
 void disabled() {
 	// Stay here until the brain is enabled. Motor commands are ignored
 	// for the whole time this runs.
+	std::uint32_t cycle = pros::millis();
 	while (pros::competition::is_disabled()) {
-		pros::lcd::print(0, "DISABLED  %d mV", pros::battery::get_voltage());
-		pros::delay(100);
+		pros::screen::print(TEXT_MEDIUM, 0, "DISABLED  %d mV", pros::battery::get_voltage());
+		pros::Task::delay_until(&cycle, 100);
 	}
 }
 
@@ -131,7 +137,7 @@ void test_motors() {
 		{14, "front L"}, {13, "back R"}, {12, "front R"},
 	};
 
-	pros::lcd::print(0, "motor test  %d mV", pros::battery::get_voltage());
+	pros::screen::print(TEXT_MEDIUM, 0, "motor test  %d mV", pros::battery::get_voltage());
 	std::printf("batt %d disabled %d\n", pros::battery::get_voltage(),
 	            pros::competition::is_disabled());
 	std::fflush(stdout);
@@ -140,13 +146,14 @@ void test_motors() {
 	for (const MotorCheck& motor : motors) {
 		const std::uint32_t index = static_cast<std::uint32_t>(motor.port - 1);
 		void* device = vexDeviceGetByIndex(index);
-		const int plugged = static_cast<int>(pros::c::registry_get_plugged_type(motor.port));
+		const int plugged = static_cast<int>(pros::Device::get_plugged_type(motor.port));
 		const int motor_type = vexMotorTypeGet(index);
 		const int battery = pros::battery::get_voltage();
 		const int enabled = pros::competition::is_disabled() ? 0 : 1;
-		pros::lcd::print(0, "batt %d mV  en %d", battery, enabled);
-		pros::lcd::print(1, "port %d %s", motor.port, motor.name);
-		pros::lcd::print(2, "plug %d type %d dev %d", plugged, motor_type, device != nullptr);
+		pros::screen::print(TEXT_MEDIUM, 0, "batt %d mV  en %d", battery, enabled);
+		pros::screen::print(TEXT_MEDIUM, 1, "port %d %s", motor.port, motor.name);
+		pros::screen::print(TEXT_MEDIUM, 2, "plug %d type %d dev %d", plugged, motor_type,
+		                    device != nullptr);
 		std::printf("start port %d %s batt %d en %d plug %d type %d dev %d\n", motor.port,
 		            motor.name, battery, enabled, plugged, motor_type, device != nullptr);
 		std::fflush(stdout);
@@ -156,18 +163,17 @@ void test_motors() {
 		vexMotorVoltageSet(index, 6000);
 		pros::delay(700);
 		const int readback = vexMotorVoltageGet(index);
-		pros::lcd::print(3, "read %d mV", readback);
+		pros::screen::print(TEXT_MEDIUM, 3, "read %d mV", readback);
 		std::printf("read port %d %d mV\n", motor.port, readback);
 		std::fflush(stdout);
 		vexMotorVoltageSet(index, 0);
 
 		std::printf("done port %d %s\n", motor.port, motor.name);
 		std::fflush(stdout);
-		std::fflush(stdout);
 		pros::delay(800);
 	}
 
-	pros::lcd::print(0, "motor test done");
+	pros::screen::print(TEXT_MEDIUM, 0, "motor test done");
 	std::printf("motor test done\n");
 	std::fflush(stdout);
 }
@@ -176,6 +182,7 @@ void teleop_override() {
 	test_motors();
 
 	bool claw_closed = false;
+	std::uint32_t cycle = pros::millis();
 
 	while (true) {
 		position_update();
@@ -185,7 +192,7 @@ void teleop_override() {
 		int right = apply_deadzone(master.get_analog(ANALOG_RIGHT_Y));
 		command_drive(left, right);
 
-		pros::lcd::print(0, "Override  %d mV", pros::battery::get_voltage());
+		pros::screen::print(TEXT_MEDIUM, 0, "Override  %d mV", pros::battery::get_voltage());
 
 		// L2 runs the autonomous routine, then returns to driver control.
 		if (master.get_digital_new_press(DIGITAL_L2)) {
@@ -209,7 +216,7 @@ void teleop_override() {
 			claw.set_value(claw_closed);
 		}
 
-		pros::delay(20);
+		pros::Task::delay_until(&cycle, 10);
 	}
 }
 
@@ -217,6 +224,7 @@ void teleop_override() {
 // Left stick X turns: stick right speeds the left side. X closes the claw,
 // Y opens it. L1 raises the DR4B, L2 lowers it.
 void teleop_kbot() {
+	std::uint32_t cycle = pros::millis();
 	while (true) {
 		position_update();
 
@@ -231,12 +239,12 @@ void teleop_kbot() {
 		}
 		command_drive(clamp_command(dir + turn), clamp_command(dir - turn));
 
-		pros::lcd::print(0, "batt %d  ctrl %d  en %d", pros::battery::get_voltage(),
-		                 master.is_connected() == 1 ? 1 : 0,
-		                 pros::competition::is_disabled() ? 0 : 1);
-		pros::lcd::print(1, "A%d B%d X%d L%d turn %d", forward ? 1 : 0, backward ? 1 : 0,
-		                 master.get_digital(DIGITAL_X) ? 1 : 0,
-		                 master.get_digital(DIGITAL_L1) ? 1 : 0, turn);
+		pros::screen::print(TEXT_MEDIUM, 0, "batt %d  ctrl %d  en %d", pros::battery::get_voltage(),
+		                    master.is_connected() == 1 ? 1 : 0,
+		                    pros::competition::is_disabled() ? 0 : 1);
+		pros::screen::print(TEXT_MEDIUM, 1, "A%d B%d X%d L%d turn %d", forward ? 1 : 0,
+		                    backward ? 1 : 0, master.get_digital(DIGITAL_X) ? 1 : 0,
+		                    master.get_digital(DIGITAL_L1) ? 1 : 0, turn);
 
 		if (master.get_digital(DIGITAL_L1)) {
 			command_lift(kLiftSpeed);
@@ -252,7 +260,7 @@ void teleop_kbot() {
 			claw.set_value(false);
 		}
 
-		pros::delay(20);
+		pros::Task::delay_until(&cycle, 10);
 	}
 }
 

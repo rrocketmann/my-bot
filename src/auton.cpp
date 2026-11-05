@@ -101,8 +101,8 @@ void position_update() {
 	robot_pose.y += delta_center * std::sin(mid_theta);
 	robot_pose.theta = wrap_angle(robot_pose.theta + delta_theta);
 
-	pros::lcd::print(2, "x %.1f  y %.1f  h %.1f", robot_pose.x, robot_pose.y,
-	                 robot_pose.theta * 180.0 / kPi);
+	pros::screen::print(TEXT_MEDIUM, 2, "x %.1f  y %.1f  h %.1f", robot_pose.x, robot_pose.y,
+	                    robot_pose.theta * 180.0 / kPi);
 }
 
 int clamp_voltage(double voltage) {
@@ -147,6 +147,7 @@ void drive_to_point(double x, double y, int timeout_ms) {
 	const std::uint32_t start = pros::millis();
 	std::uint32_t prev_time = start;
 	std::uint32_t settled_since = 0;
+	std::uint32_t cycle = start;
 
 	while (pros::millis() - start < static_cast<std::uint32_t>(timeout_ms)) {
 		const std::uint32_t now = pros::millis();
@@ -196,7 +197,7 @@ void drive_to_point(double x, double y, int timeout_ms) {
 		}
 
 		command_drive(clamp_voltage(left_voltage), clamp_voltage(right_voltage));
-		pros::delay(10);
+		pros::Task::delay_until(&cycle, 10);
 	}
 
 	command_drive(0, 0);
