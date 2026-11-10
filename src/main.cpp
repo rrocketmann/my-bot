@@ -4,16 +4,17 @@
 #include <cstdint>
 #include <cstdio>
 
-// These take a zero-based smart-port index. motor55::spin in the VEXcode
-// SDK does the same lookup, then vexDeviceMotorVoltageSet. PROS motor_move
-// never gets that far: an MC55 is device type 255, and the motor claim
-// returns ENODEV. Type 0 and 1 are 11 W and 5.5 W. Anything else, including
-// an MC55 (motor type 2), is capped at 8 V.
+// PROS motor_move returns ENODEV on an MC55. VEXcode motor55::spin calls
+// vexMotorVoltageSet. Type 0 is an 11 W motor and type 1 is 5.5 W (12 V).
+// An MC55 (type 2) is capped at 8 V. A voltage write with the current limit
+// still at 0 produces no torque, so the limit goes out before the voltage.
+// The value the controller applies on the wire is the open-loop PWM, -100..100.
 extern "C" {
-void* vexDeviceGetByIndex(std::uint32_t index);
 std::int32_t vexMotorVoltageSet(std::uint32_t index, std::int32_t voltage);
 std::int32_t vexMotorVoltageLimitSet(std::uint32_t index, std::int32_t limit);
-std::int32_t vexMotorVoltageGet(std::uint32_t index);
+std::int32_t vexMotorPwmSet(std::uint32_t index, std::int32_t pwm);
+std::int32_t vexMotorCurrentLimitSet(std::uint32_t index, std::int32_t limit);
+std::int32_t vexMotorBrakeModeSet(std::uint32_t index, std::int32_t mode);
 std::int32_t vexMotorTypeGet(std::uint32_t index);
 }
 
@@ -22,15 +23,24 @@ void port_move(int port, int command) {
 	if (reversed) {
 		port = -port;
 	}
+	if (port < 1 || port > 21) {
+		return;
+	}
 	const std::uint32_t index = static_cast<std::uint32_t>(port - 1);
 	const int kind = vexMotorTypeGet(index);
 	const int full_scale = (kind == 0 || kind == 1) ? 12000 : 8000;
 	int millivolts = command * full_scale / 127;
+	int pwm = command * 100 / 127;
 	if (reversed) {
 		millivolts = -millivolts;
+		pwm = -pwm;
 	}
+	// Milliamps. MC55 hardware tops out near 1.2 A; smart motors use 2.5 A.
+	const int current_limit = (kind == 0 || kind == 1) ? 2500 : 1200;
+	vexMotorCurrentLimitSet(index, current_limit);
 	vexMotorVoltageLimitSet(index, full_scale);
 	vexMotorVoltageSet(index, millivolts);
+	vexMotorPwmSet(index, pwm);
 }
 
 void command_drive(int left, int right) {
@@ -114,68 +124,32 @@ void initialize() {
 }
 
 void disabled() {
-	// Stay here until the brain is enabled. Motor commands are ignored
-	// for the whole time this runs.
+	// VEXos drops every motor packet while this bit is set. A damaged
+	// controller competition port sets the bit and the brain draws no
+	// disabled icon. The controller screen is the visible signal.
 	std::uint32_t cycle = pros::millis();
 	while (pros::competition::is_disabled()) {
 		pros::screen::print(TEXT_MEDIUM, 0, "DISABLED  %d mV", pros::battery::get_voltage());
-		pros::Task::delay_until(&cycle, 100);
+		master.print(0, 0, "DISABLED");
+		pros::Task::delay_until(&cycle, 500);
 	}
 }
 
 void competition_initialize() {}
 
-// Spin one motor at a time so a dead port is obvious. Positive voltage is
-// the motor's own forward direction, ignoring the drive reversal flags.
+// Coast, then all four drive motors forward together. A per-port twitch is
+// easy to miss, and a latched hold brake will eat a voltage command.
 void test_motors() {
-	struct MotorCheck {
-		int port;
-		const char* name;
-	};
-	const MotorCheck motors[] = {
-		{1, "DR4B R"},  {2, "DR4B L"},  {3, "back L"},
-		{14, "front L"}, {13, "back R"}, {12, "front R"},
-	};
-
-	pros::screen::print(TEXT_MEDIUM, 0, "motor test  %d mV", pros::battery::get_voltage());
-	std::printf("batt %d disabled %d\n", pros::battery::get_voltage(),
-	            pros::competition::is_disabled());
-	std::fflush(stdout);
-	pros::delay(1500);
-
-	for (const MotorCheck& motor : motors) {
-		const std::uint32_t index = static_cast<std::uint32_t>(motor.port - 1);
-		void* device = vexDeviceGetByIndex(index);
-		const int plugged = static_cast<int>(pros::Device::get_plugged_type(motor.port));
-		const int motor_type = vexMotorTypeGet(index);
-		const int battery = pros::battery::get_voltage();
-		const int enabled = pros::competition::is_disabled() ? 0 : 1;
-		pros::screen::print(TEXT_MEDIUM, 0, "batt %d mV  en %d", battery, enabled);
-		pros::screen::print(TEXT_MEDIUM, 1, "port %d %s", motor.port, motor.name);
-		pros::screen::print(TEXT_MEDIUM, 2, "plug %d type %d dev %d", plugged, motor_type,
-		                    device != nullptr);
-		std::printf("start port %d %s batt %d en %d plug %d type %d dev %d\n", motor.port,
-		            motor.name, battery, enabled, plugged, motor_type, device != nullptr);
-		std::fflush(stdout);
-
-		// 6 V is inside the 8 V MC55 cap and enough to see a smart motor turn.
-		vexMotorVoltageLimitSet(index, 8000);
-		vexMotorVoltageSet(index, 6000);
-		pros::delay(700);
-		const int readback = vexMotorVoltageGet(index);
-		pros::screen::print(TEXT_MEDIUM, 3, "read %d mV", readback);
-		std::printf("read port %d %d mV\n", motor.port, readback);
-		std::fflush(stdout);
-		vexMotorVoltageSet(index, 0);
-
-		std::printf("done port %d %s\n", motor.port, motor.name);
-		std::fflush(stdout);
-		pros::delay(800);
+	const int drive_ports[] = {3, 14, 13, 12};
+	for (int port : drive_ports) {
+		vexMotorBrakeModeSet(static_cast<std::uint32_t>(port - 1), 0);
 	}
-
-	pros::screen::print(TEXT_MEDIUM, 0, "motor test done");
-	std::printf("motor test done\n");
-	std::fflush(stdout);
+	pros::screen::print(TEXT_MEDIUM, 0, "FORWARD  %d mV", pros::battery::get_voltage());
+	master.print(0, 0, "FORWARD");
+	command_drive(127, 127);
+	pros::delay(1000);
+	command_drive(0, 0);
+	pros::screen::print(TEXT_MEDIUM, 0, "pulse done");
 }
 
 void teleop_override() {
@@ -220,31 +194,42 @@ void teleop_override() {
 	}
 }
 
-// Tank buttons plus a single stick. A holds forward, B holds backward.
-// Left stick X turns: stick right speeds the left side. X closes the claw,
-// Y opens it. L1 raises the DR4B, L2 lowers it.
+// A holds forward, B holds backward, left stick X turns (stick right
+// speeds the left side). The two stick Y axes are tank drive when the
+// right stick leaves the deadzone. X closes the claw, Y opens it.
+// L1 raises the DR4B, L2 lowers it.
 void teleop_kbot() {
 	std::uint32_t cycle = pros::millis();
 	while (true) {
 		position_update();
 
-		int turn = apply_deadzone(master.get_analog(ANALOG_LEFT_X));
+		const int turn = apply_deadzone(master.get_analog(ANALOG_LEFT_X));
+		const int left_stick = apply_deadzone(master.get_analog(ANALOG_LEFT_Y));
+		const int right_stick = apply_deadzone(master.get_analog(ANALOG_RIGHT_Y));
 		const bool forward = master.get_digital(DIGITAL_A);
 		const bool backward = master.get_digital(DIGITAL_B);
-		int dir = 0;
-		if (forward && !backward) {
-			dir = 127;
-		} else if (backward && !forward) {
-			dir = -127;
+		int left = 0;
+		int right = 0;
+		if (right_stick != 0) {
+			left = left_stick;
+			right = right_stick;
+		} else {
+			int dir = left_stick;
+			if (forward && !backward) {
+				dir = 127;
+			} else if (backward && !forward) {
+				dir = -127;
+			}
+			left = clamp_command(dir + turn);
+			right = clamp_command(dir - turn);
 		}
-		command_drive(clamp_command(dir + turn), clamp_command(dir - turn));
+		command_drive(left, right);
 
 		pros::screen::print(TEXT_MEDIUM, 0, "batt %d  ctrl %d  en %d", pros::battery::get_voltage(),
 		                    master.is_connected() == 1 ? 1 : 0,
 		                    pros::competition::is_disabled() ? 0 : 1);
-		pros::screen::print(TEXT_MEDIUM, 1, "A%d B%d X%d L%d turn %d", forward ? 1 : 0,
-		                    backward ? 1 : 0, master.get_digital(DIGITAL_X) ? 1 : 0,
-		                    master.get_digital(DIGITAL_L1) ? 1 : 0, turn);
+		pros::screen::print(TEXT_MEDIUM, 1, "L%d R%d A%d B%d", left, right, forward ? 1 : 0,
+		                    backward ? 1 : 0);
 
 		if (master.get_digital(DIGITAL_L1)) {
 			command_lift(kLiftSpeed);
@@ -267,8 +252,7 @@ void teleop_kbot() {
 void opcontrol() {
 	left_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_COAST);
 	right_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_COAST);
-	// Pulses every motor with no controller input, and prints battery,
-	// enable state, and the device the firmware reports on that port.
+	// One second of full forward, then the sticks and A/B take over.
 	test_motors();
 	teleop_kbot();
 }
