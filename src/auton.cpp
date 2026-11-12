@@ -26,9 +26,6 @@ constexpr double kStaticVoltage = 10.0;
 constexpr double kSettleDistance = 1.0;
 constexpr int kSettleTimeMs = 200;
 
-extern pros::MotorGroup left_drive;
-extern pros::MotorGroup right_drive;
-extern pros::MotorGroup dr4b;
 extern pros::adi::DigitalOut claw;
 
 Pose robot_pose{0.0, 0.0, 0.0};
@@ -40,33 +37,37 @@ double wrap_angle(double angle) {
 	return std::remainder(angle, 2.0 * kPi);
 }
 
-double side_inches(pros::MotorGroup& group) {
-	const std::vector<double> positions = group.get_position_all();
+double side_inches(const int* ports, int count) {
 	double sum = 0.0;
-	int count = 0;
-	for (double degrees : positions) {
+	int used = 0;
+	for (int i = 0; i < count; ++i) {
+		const double degrees = port_position_degrees(ports[i]);
 		if (!std::isfinite(degrees)) {
 			continue;
 		}
 		sum += degrees;
-		++count;
+		++used;
 	}
-	if (count == 0) {
+	if (used == 0) {
 		return 0.0;
 	}
-	const double motor_turns = (sum / count) / 360.0;
+	const double motor_turns = (sum / used) / 360.0;
 	return motor_turns * kGearRatio * kPi * kWheelDiameter;
 }
 
 void sync_encoders() {
-	prev_left_inches = side_inches(left_drive);
-	prev_right_inches = side_inches(right_drive);
+	prev_left_inches = side_inches(kLeftDrivePorts, 2);
+	prev_right_inches = side_inches(kRightDrivePorts, 2);
 	encoders_ready = true;
 }
 
 void position_init() {
-	left_drive.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
-	right_drive.set_encoder_units_all(pros::E_MOTOR_ENCODER_DEGREES);
+	for (int port : kLeftDrivePorts) {
+		port_set_encoder_degrees(port);
+	}
+	for (int port : kRightDrivePorts) {
+		port_set_encoder_degrees(port);
+	}
 	sync_encoders();
 	robot_pose = {0.0, 0.0, 0.0};
 }
@@ -86,8 +87,8 @@ void position_update() {
 		sync_encoders();
 	}
 
-	const double left_inches = side_inches(left_drive);
-	const double right_inches = side_inches(right_drive);
+	const double left_inches = side_inches(kLeftDrivePorts, 2);
+	const double right_inches = side_inches(kRightDrivePorts, 2);
 	const double delta_left = left_inches - prev_left_inches;
 	const double delta_right = right_inches - prev_right_inches;
 	prev_left_inches = left_inches;

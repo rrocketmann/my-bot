@@ -22,6 +22,18 @@ void position_set(Pose pose);
 // until the pose is within the settle distance or the timeout elapses.
 void drive_to_point(double x, double y, int timeout_ms = 4000);
 
+// Signed smart ports. A negative port reverses the command and the encoder.
+// 1 DR4B right, 2 DR4B left, 3 back left, 14 front left,
+// 13 back right, 12 front right.
+constexpr int kLeftDrivePorts[] = {3, 14};
+constexpr int kRightDrivePorts[] = {-13, -12};
+constexpr int kLiftPorts[] = {1, -2};
+
+// Shaft angle in degrees from the motor. A negative port negates it.
+double port_position_degrees(int port);
+// Ask the motor to report that angle in degrees.
+void port_set_encoder_degrees(int port);
+
 // Voltage commands in the -127..127 joystick scale. The port signs
 // carry the reversals: right drive and the left lift motor.
 void command_drive(int left, int right);

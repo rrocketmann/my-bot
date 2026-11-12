@@ -3,25 +3,37 @@
 
 #include <cstdint>
 
-// Negate a port number to reverse that motor.
-// 1 DR4B right, 2 DR4B left, 3 back left, 14 front left,
-// 13 back right, 12 front right. Port 11 is the radio.
-// Right drive is reversed so positive is forward. Left DR4B is
-// reversed so both lift motors raise together.
+// 11 W V5 smart motors. Negate a port number to reverse that motor.
+// Port 11 is the radio. Right drive is reversed so positive is forward.
+// Left DR4B is reversed so both lift motors raise together.
 //
-// MotorGroup::move only accepts smart-port device type 2. An MC55
-// enumerates as type 255, so that call returns an error and the motor
-// stays still. VEXcode motor55::spin calls the VEXos functions below.
-// vexMotorTypeGet: 0 is 11 W, 1 is 5.5 W (both 12 V), 2 is an MC55 (8 V).
-// A voltage write with the current limit still at 0 produces no torque.
-// The value an MC55 applies on the wire is the open-loop PWM.
+// MotorGroup::move sends voltage only when PROS classifies the port as
+// device type 2. A reading of 255 means PROS has no name for the device.
+// These 11 W motors are still commanded through VEXos at 12 V and 2500 mA.
 extern "C" {
 std::int32_t vexMotorVoltageSet(std::uint32_t index, std::int32_t voltage);
 std::int32_t vexMotorVoltageLimitSet(std::uint32_t index, std::int32_t limit);
-std::int32_t vexMotorPwmSet(std::uint32_t index, std::int32_t pwm);
 std::int32_t vexMotorCurrentLimitSet(std::uint32_t index, std::int32_t limit);
 std::int32_t vexMotorBrakeModeSet(std::uint32_t index, std::int32_t mode);
-std::int32_t vexMotorTypeGet(std::uint32_t index);
+double vexMotorPositionGet(std::uint32_t index);
+void vexMotorEncoderUnitsSet(std::uint32_t index, std::int32_t units);
+}
+
+// Degrees. Matches pros::E_MOTOR_ENCODER_DEGREES.
+constexpr std::int32_t kEncoderDegrees = 0;
+constexpr int kFullScaleMillivolts = 12000;
+constexpr int kCurrentLimitMilliamps = 2500;
+
+bool port_index(int port, std::uint32_t* index, bool* reversed) {
+	*reversed = port < 0;
+	if (*reversed) {
+		port = -port;
+	}
+	if (port < 1 || port > 21) {
+		return false;
+	}
+	*index = static_cast<std::uint32_t>(port - 1);
+	return true;
 }
 
 pros::MotorGroup left_drive({3, 14});
@@ -30,43 +42,50 @@ pros::MotorGroup dr4b({1, -2});
 pros::adi::DigitalOut claw('B');
 pros::Controller master(pros::E_CONTROLLER_MASTER);
 
-constexpr int kLeftDrivePorts[] = {3, 14};
-constexpr int kRightDrivePorts[] = {-13, -12};
-constexpr int kLiftPorts[] = {1, -2};
-
 void port_move(int port, int command) {
-	const bool reversed = port < 0;
-	if (reversed) {
-		port = -port;
-	}
-	if (port < 1 || port > 21) {
+	bool reversed = false;
+	std::uint32_t index = 0;
+	if (!port_index(port, &index, &reversed)) {
 		return;
 	}
-	const std::uint32_t index = static_cast<std::uint32_t>(port - 1);
-	const int kind = vexMotorTypeGet(index);
-	const int full_scale = (kind == 0 || kind == 1) ? 12000 : 8000;
-	int millivolts = command * full_scale / 127;
-	int pwm = command * 100 / 127;
+	int millivolts = command * kFullScaleMillivolts / 127;
 	if (reversed) {
 		millivolts = -millivolts;
-		pwm = -pwm;
 	}
-	// Milliamps. An MC55 tops out near 1.2 A; a smart motor uses 2.5 A.
-	const int current_limit = (kind == 0 || kind == 1) ? 2500 : 1200;
-	vexMotorCurrentLimitSet(index, current_limit);
-	vexMotorVoltageLimitSet(index, full_scale);
+	vexMotorCurrentLimitSet(index, kCurrentLimitMilliamps);
+	vexMotorVoltageLimitSet(index, kFullScaleMillivolts);
 	vexMotorVoltageSet(index, millivolts);
-	vexMotorPwmSet(index, pwm);
 }
 
 void port_brake(int port, int mode) {
-	if (port < 0) {
-		port = -port;
-	}
-	if (port < 1 || port > 21) {
+	bool reversed = false;
+	std::uint32_t index = 0;
+	if (!port_index(port, &index, &reversed)) {
 		return;
 	}
-	vexMotorBrakeModeSet(static_cast<std::uint32_t>(port - 1), mode);
+	vexMotorBrakeModeSet(index, mode);
+}
+
+double port_position_degrees(int port) {
+	bool reversed = false;
+	std::uint32_t index = 0;
+	if (!port_index(port, &index, &reversed)) {
+		return 0.0;
+	}
+	double degrees = vexMotorPositionGet(index);
+	if (reversed) {
+		degrees = -degrees;
+	}
+	return degrees;
+}
+
+void port_set_encoder_degrees(int port) {
+	bool reversed = false;
+	std::uint32_t index = 0;
+	if (!port_index(port, &index, &reversed)) {
+		return;
+	}
+	vexMotorEncoderUnitsSet(index, kEncoderDegrees);
 }
 
 void command_ports(const int* ports, int count, int command) {
@@ -121,11 +140,7 @@ int clamp_command(int value) {
 
 void initialize() {
 	pros::screen::set_pen(pros::Color::white);
-	pros::screen::print(TEXT_MEDIUM, 1, "k-bot init");
-
-	int left_pos = left_drive.get_position_all()[0];
-	int right_pos = right_drive.get_position_all()[0];
-	pros::screen::print(TEXT_MEDIUM, 2, "init pos L:%d R:%d", left_pos, right_pos);
+	pros::screen::print(TEXT_MEDIUM, 1, "k-bot");
 
 	command_brake_drive(pros::E_MOTOR_BRAKE_COAST);
 	command_brake_lift(pros::E_MOTOR_BRAKE_HOLD);
