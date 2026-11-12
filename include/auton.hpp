@@ -22,9 +22,13 @@ void position_set(Pose pose);
 // until the pose is within the settle distance or the timeout elapses.
 void drive_to_point(double x, double y, int timeout_ms = 4000);
 
-// Voltage commands in the -127..127 joystick scale. The motor groups
+// Voltage commands in the -127..127 joystick scale. The port signs
 // carry the reversals: right drive and the left lift motor.
 void command_drive(int left, int right);
 void command_lift(int voltage);
+
+// Brake modes are the PROS values: 0 coast, 1 brake, 2 hold.
+void command_brake_drive(int mode);
+void command_brake_lift(int mode);
 
 #endif

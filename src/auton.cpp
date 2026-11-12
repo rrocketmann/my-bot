@@ -138,8 +138,7 @@ struct Pid {
 };
 
 void drive_to_point(double x, double y, int timeout_ms) {
-	left_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_BRAKE);
-	right_drive.set_brake_mode_all(pros::E_MOTOR_BRAKE_BRAKE);
+	command_brake_drive(pros::E_MOTOR_BRAKE_BRAKE);
 
 	Pid distance_pid{kDistanceP, kDistanceD};
 	Pid heading_pid{kHeadingP, kHeadingD};
@@ -211,7 +210,7 @@ void run_dr4b(int voltage, int duration_ms) {
 
 void autonomous() {
 	position_set({0.0, 0.0, 0.0});
-	dr4b.set_brake_mode_all(pros::E_MOTOR_BRAKE_HOLD);
+	command_brake_lift(pros::E_MOTOR_BRAKE_HOLD);
 
 	// Short straight move, then a timed lift cycle and a claw cycle.
 	drive_to_point(12.0, 0.0);
